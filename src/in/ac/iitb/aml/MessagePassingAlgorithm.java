@@ -4,6 +4,7 @@
 package in.ac.iitb.aml;
 
 import in.ac.iitb.aml.model.AdjacencyGraph;
+import in.ac.iitb.aml.model.CliquePotential;
 import in.ac.iitb.aml.model.Edge;
 
 import java.util.ArrayList;
@@ -18,7 +19,8 @@ import java.util.Map;
  */
 public class MessagePassingAlgorithm {
 	
-	private void constructInitialPotentials(Map<Integer,BitSet> cliques, List<BitSet> edges, Map<BitSet,Map<List<Integer>,Float>> edgePotential){
+	private Map<Integer, CliquePotential> constructInitialPotentials(Map<Integer,BitSet> cliques, List<BitSet> edges, Map<BitSet,Map<BitSet,Float>> edgePotential){
+		Map<Integer,CliquePotential> cliquePotentialMap = new HashMap<Integer, CliquePotential>();
 		Map<Integer, List<BitSet>> edgeCliqueMapping = new HashMap<Integer, List<BitSet>>();
 		for(BitSet edge: edges){
 			for (Map.Entry<Integer, BitSet> clique : cliques.entrySet()) {
@@ -42,27 +44,24 @@ public class MessagePassingAlgorithm {
 		for(Map.Entry<Integer, List<BitSet>> edgeCliqueMappingentry :edgeCliqueMapping.entrySet()){
 			List<BitSet> edgesInClique = edgeCliqueMappingentry.getValue();
 			
-			Map<List<Integer>,Float> product = edgePotential.get(edgesInClique.get(0));
+//			Map<BitSet,Float> product = edgePotential.get(edgesInClique.get(0));
+			BitSet cliqueNodesProduct = edgesInClique.get(0);
+			CliquePotential product = new CliquePotential(cliqueNodesProduct, edgePotential.get(cliqueNodesProduct));
 			for(int i =1; i<edgesInClique.size(); i++){
-				product = factorProduct(product, edgesInClique.get(i)); 
+				BitSet cliqueNodesOperand = edgesInClique.get(i);
+				product = factorProduct(product, new CliquePotential(cliqueNodesOperand, edgePotential.get(cliqueNodesOperand))); 
 			}
-			 
-			
+			cliquePotentialMap.put(edgeCliqueMappingentry.getKey(), product);
 		}
+		return cliquePotentialMap;
 	}
-	
-	private Map<List<Integer>, Float> factorProduct(
-			Map<List<Integer>, Float> product, BitSet bitSet) {
-		// TODO Auto-generated method stub
-		return null;
-	}
-	
-	private Map<BitSet,Float> factorProduct(Map<BitSet,Float> operand1, Map<BitSet,Float> operand2, BitSet operand1Meta, BitSet operand2Meta, BitSet cardinality ){
+
+	private CliquePotential factorProduct(CliquePotential operand1, CliquePotential operand2){
 		Map<BitSet,Float> product = new HashMap<BitSet,Float>();	
-		BitSet intersectionMeta = (BitSet) operand1Meta.clone();
-		intersectionMeta.and(operand2Meta);
-		for(Map.Entry<BitSet, Float> operand1Entry:operand1.entrySet()){
-			for(Map.Entry<BitSet, Float> operand2Entry:operand2.entrySet()){
+		BitSet intersectionMeta = (BitSet) operand1.getCliqueNodes().clone();
+		intersectionMeta.and(operand2.getCliqueNodes());
+		for(Map.Entry<BitSet, Float> operand1Entry:operand1.getPotential().entrySet()){
+			for(Map.Entry<BitSet, Float> operand2Entry:operand2.getPotential().entrySet()){
 				BitSet productEntry = operand1Entry.getKey();
 				productEntry.and(operand2Entry.getKey());
 				
@@ -80,24 +79,32 @@ public class MessagePassingAlgorithm {
 				
 			}
 		}
-		return product;
+		BitSet union = (BitSet) operand1.getCliqueNodes().clone();
+		union.or(operand2.getCliqueNodes());
+		CliquePotential factorProduct = new CliquePotential(union, product);
+		return factorProduct;
 	}
 
 	
-	private void marginalization(Map<Integer,Map<BitSet,Float>> cliquePotential, AdjacencyGraph adjacencyGraph, Map<Integer,BitSet> clique, Map<Edge,Map<BitSet,Float>> message){
+	private void mpa(Map<Integer,CliquePotential> cliquePotentialMap, AdjacencyGraph originalGraph, AdjacencyGraph truncatedGraph,Map<Edge,CliquePotential> message){
 		//find leaf node in graph
-		int numNodes = adjacencyGraph.getNumberNodes();
-		int [][] graph = adjacencyGraph.getAdjacencyMatrix();
+		int numNodes = truncatedGraph.getNumberNodes();
+		int [][] graph = truncatedGraph.getAdjacencyMatrix();
 		int i=0;
+		boolean found = false;
 		outerloop:for(; i<numNodes; i++){
 			int sum = 0;
 			for(int j=0; j<numNodes; j++){
 				sum += graph[i][j];
 			}
 			if(sum == 1){
+				found = true;
 				break outerloop;
 			}
 		}
+		/*if(!found){
+			return;	//break out of loop
+		}*/
 		//i contains leaf node
 		int k=0;
 		for(; k<numNodes; k++){
@@ -106,18 +113,32 @@ public class MessagePassingAlgorithm {
 			}
 		}
 		//k contains node to which it is connected
-		BitSet sepSet = (BitSet) clique.get(i).clone();
-		sepSet.and(clique.get(k));
+		BitSet sepSet = (BitSet) cliquePotentialMap.get(i).getCliqueNodes().clone();
+		sepSet.and(cliquePotentialMap.get(k).getCliqueNodes());
 		
-		BitSet marginalSet = (BitSet)clique.get(i).clone();
+		BitSet marginalSet = (BitSet)cliquePotentialMap.get(i).getCliqueNodes().clone();
 		marginalSet.andNot(sepSet);
 		
-		Map<BitSet,Float> cliquePotentialValues = cliquePotential.get(i);
-		marginalize(message, i, k, marginalSet, cliquePotentialValues);
+		Map<BitSet,Float> cliquePotentialValues = cliquePotentialMap.get(i).getPotential();
+		
+		CliquePotential messagePotential = cliquePotentialMap.get(i);
+		for(int j=0; j<numNodes; j++){
+			if(message.containsKey(new Edge(j,i,1))){
+				messagePotential = factorProduct(messagePotential, message.get(new Edge(j,i,1)));
+			}
+		}
+		marginalize(message, i, k, marginalSet, sepSet, cliquePotentialValues);
+		
+		for(int j=0; j<numNodes; j++){
+			graph[i][j]=0;
+			graph[j][i]=0;
+		}
+		truncatedGraph.setAdjacencyMatrix(graph);
+		mpa(cliquePotentialMap, originalGraph, truncatedGraph, message);
 	}
 
-	private void marginalize(Map<Edge, Map<BitSet, Float>> message, int i,
-			int k, BitSet marginalSet, Map<BitSet, Float> cliquePotentialValues) {
+	private void marginalize(Map<Edge, CliquePotential> message, int i,
+			int k, BitSet marginalSet, BitSet sepSet, Map<BitSet, Float> cliquePotentialValues) {
 		Map<BitSet,Float> messagePotentialValues = new HashMap<BitSet, Float>(); 
 		for(Map.Entry<BitSet, Float> cliquePotentialEntry: cliquePotentialValues.entrySet()){
 			BitSet messageKey = (BitSet) cliquePotentialEntry.getKey().clone();
@@ -130,7 +151,9 @@ public class MessagePassingAlgorithm {
 		}
 		
 		Edge edge = new Edge(i, k, 1);
-		message.put(edge, messagePotentialValues);
+		
+		CliquePotential messageValue = new CliquePotential(sepSet, messagePotentialValues);
+		message.put(edge, messageValue);
 	}
 	
 }
