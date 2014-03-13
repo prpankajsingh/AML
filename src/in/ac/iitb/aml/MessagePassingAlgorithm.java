@@ -12,6 +12,7 @@ import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * @author ratish
@@ -19,7 +20,7 @@ import java.util.Map;
  */
 public class MessagePassingAlgorithm {
 	
-	private Map<Integer, CliquePotential> constructInitialPotentials(Map<Integer,BitSet> cliques, List<BitSet> edges, Map<BitSet,Map<BitSet,Float>> edgePotential){
+	public Map<Integer, CliquePotential> constructInitialPotentials(Map<Integer,BitSet> cliques, List<BitSet> edges, Map<BitSet,Map<BitSet,Float>> edgePotential){
 		Map<Integer,CliquePotential> cliquePotentialMap = new HashMap<Integer, CliquePotential>();
 		Map<Integer, List<BitSet>> edgeCliqueMapping = new HashMap<Integer, List<BitSet>>();
 		for(BitSet edge: edges){
@@ -62,8 +63,8 @@ public class MessagePassingAlgorithm {
 		intersectionMeta.and(operand2.getCliqueNodes());
 		for(Map.Entry<BitSet, Float> operand1Entry:operand1.getPotential().entrySet()){
 			for(Map.Entry<BitSet, Float> operand2Entry:operand2.getPotential().entrySet()){
-				BitSet productEntry = operand1Entry.getKey();
-				productEntry.and(operand2Entry.getKey());
+//				BitSet productEntry = operand1Entry.getKey();
+//				productEntry.and(operand2Entry.getKey());
 				
 				BitSet intesectionMetaEntry1 = (BitSet) intersectionMeta.clone();
 				intesectionMetaEntry1.and(operand1Entry.getKey());
@@ -71,8 +72,9 @@ public class MessagePassingAlgorithm {
 				BitSet intesectionMetaEntry2 = (BitSet) intersectionMeta.clone();
 				intesectionMetaEntry2.and(operand2Entry.getKey());
 				
-				if(productEntry.equals(intesectionMetaEntry1) && productEntry.equals(intesectionMetaEntry2)){
-					BitSet unionOperand = (BitSet)operand1Entry.getKey();
+//				if(productEntry.equals(intesectionMetaEntry1) && productEntry.equals(intesectionMetaEntry2)){
+				if(intesectionMetaEntry1.equals(intesectionMetaEntry2)){
+					BitSet unionOperand = (BitSet)operand1Entry.getKey().clone();
 					unionOperand.or(operand2Entry.getKey());
 					product.put(unionOperand, operand1Entry.getValue()*operand2Entry.getValue());
 				}
@@ -86,7 +88,89 @@ public class MessagePassingAlgorithm {
 	}
 
 	
-	private void mpa(Map<Integer,CliquePotential> cliquePotentialMap, AdjacencyGraph originalGraph, AdjacencyGraph truncatedGraph,Map<Edge,CliquePotential> message){
+	public void computeMarginal(BitSet inputVariables,Map<Integer,CliquePotential> cliquePotentialMap, AdjacencyGraph truncatedGraph,Map<Edge,CliquePotential> message){
+		//iterate through cliques
+		//identify one clique as root node
+		//run mpa with not touching root node
+		//at final step, marginalize over remaining nodes in root clique
+
+		Integer rootNode = null;
+		for (Map.Entry<Integer, CliquePotential> clique : cliquePotentialMap.entrySet()) {
+			BitSet originalValue = clique.getValue().getCliqueNodes();
+			BitSet newvalue = (BitSet) originalValue.clone();
+			newvalue.or(inputVariables);
+			if(originalValue.equals(newvalue)){
+				rootNode = clique.getKey();
+			}
+		}
+		
+		if(rootNode == null){
+			throw new IllegalArgumentException("Nodes are not contained within a clique");
+		}
+		
+		computeMarginal(inputVariables, rootNode, cliquePotentialMap, truncatedGraph, message);
+		
+	}
+	
+	private void computeMarginal(BitSet inputNode, Integer rootNode, Map<Integer,CliquePotential> cliquePotentialMap, AdjacencyGraph truncatedGraph,Map<Edge,CliquePotential> message){
+		//find leaf node in graph
+		int numNodes = truncatedGraph.getNumberNodes();
+		int [][] graph = truncatedGraph.getAdjacencyMatrix();
+		int i=0;
+		boolean found = false;
+		outerloop:for(; i<numNodes; i++){
+			int sum = 0;
+			for(int j=0; j<numNodes; j++){
+				sum += graph[i][j];
+			}
+			if(sum == 1 && i!= rootNode){
+				found = true;
+				break outerloop;
+			}
+		}
+		
+		//i contains leaf node
+		
+		BitSet marginalSet = null;
+
+		if(!found){
+			marginalSet = new BitSet(numNodes);
+			marginalSet.or(cliquePotentialMap.get(rootNode).getCliqueNodes());
+			marginalSet.andNot(inputNode);
+			
+			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, rootNode);
+			Map<BitSet, Float> marginalOutput = marginalize(marginalSet, cliquePotentialValues);
+			System.out.println("marginalOutput" +marginalOutput);
+		}else{
+			int k=0;
+			for(; k<numNodes; k++){
+				if(graph[i][k]==1){
+					break;
+				}
+			}
+			//k contains node to which it is connected
+			BitSet sepSet = (BitSet) cliquePotentialMap.get(i).getCliqueNodes().clone();
+			sepSet.and(cliquePotentialMap.get(k).getCliqueNodes());
+			
+			
+			marginalSet = (BitSet)cliquePotentialMap.get(i).getCliqueNodes().clone();
+			marginalSet.andNot(sepSet);
+			
+			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, i);
+			marginalize(message, i, k, marginalSet, sepSet, cliquePotentialValues);
+			
+			for(int j=0; j<numNodes; j++){
+				graph[i][j]=0;
+				graph[j][i]=0;
+			}
+			truncatedGraph.setAdjacencyMatrix(graph);
+			computeMarginal(inputNode,rootNode, cliquePotentialMap, truncatedGraph, message);
+		}
+	}
+	
+	public void computeNormalizationConstant(Map<Integer,CliquePotential> cliquePotentialMap, AdjacencyGraph truncatedGraph,Map<Edge,CliquePotential> message, Set<Integer> nodes){
 		//find leaf node in graph
 		int numNodes = truncatedGraph.getNumberNodes();
 		int [][] graph = truncatedGraph.getAdjacencyMatrix();
@@ -98,27 +182,55 @@ public class MessagePassingAlgorithm {
 				sum += graph[i][j];
 			}
 			if(sum == 1){
+				nodes.remove(i);
 				found = true;
 				break outerloop;
 			}
 		}
-		/*if(!found){
-			return;	//break out of loop
-		}*/
+		
 		//i contains leaf node
-		int k=0;
-		for(; k<numNodes; k++){
-			if(graph[i][k]==1){
-				break;
+		
+		BitSet marginalSet = null;
+		if(!found){
+			marginalSet = new BitSet(numNodes);
+			marginalSet.flip(0, numNodes);
+			
+			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, nodes.iterator().next());
+			Float normalizationConstant = marginalize(marginalSet, cliquePotentialValues).get(new BitSet(numNodes));
+			System.out.println("normalizationConstant "+normalizationConstant);
+		}else{
+		
+			int k=0;
+			for(; k<numNodes; k++){
+				if(graph[i][k]==1){
+					break;
+				}
 			}
+			//k contains node to which it is connected
+			BitSet sepSet = (BitSet) cliquePotentialMap.get(i).getCliqueNodes().clone();
+			sepSet.and(cliquePotentialMap.get(k).getCliqueNodes());
+			
+			
+			marginalSet = (BitSet)cliquePotentialMap.get(i).getCliqueNodes().clone();
+			marginalSet.andNot(sepSet);
+			
+			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, i);
+			marginalize(message, i, k, marginalSet, sepSet, cliquePotentialValues);
+			
+			for(int j=0; j<numNodes; j++){
+				graph[i][j]=0;
+				graph[j][i]=0;
+			}
+			truncatedGraph.setAdjacencyMatrix(graph);
+			computeNormalizationConstant(cliquePotentialMap, truncatedGraph, message, nodes);
 		}
-		//k contains node to which it is connected
-		BitSet sepSet = (BitSet) cliquePotentialMap.get(i).getCliqueNodes().clone();
-		sepSet.and(cliquePotentialMap.get(k).getCliqueNodes());
-		
-		BitSet marginalSet = (BitSet)cliquePotentialMap.get(i).getCliqueNodes().clone();
-		marginalSet.andNot(sepSet);
-		
+	}
+
+	private Map<BitSet, Float> computeFactorProduct(
+			Map<Integer, CliquePotential> cliquePotentialMap,
+			Map<Edge, CliquePotential> message, int numNodes, int i) {
 		Map<BitSet,Float> cliquePotentialValues = cliquePotentialMap.get(i).getPotential();
 		
 		CliquePotential messagePotential = cliquePotentialMap.get(i);
@@ -127,18 +239,21 @@ public class MessagePassingAlgorithm {
 				messagePotential = factorProduct(messagePotential, message.get(new Edge(j,i,1)));
 			}
 		}
-		marginalize(message, i, k, marginalSet, sepSet, cliquePotentialValues);
-		
-		for(int j=0; j<numNodes; j++){
-			graph[i][j]=0;
-			graph[j][i]=0;
-		}
-		truncatedGraph.setAdjacencyMatrix(graph);
-		mpa(cliquePotentialMap, originalGraph, truncatedGraph, message);
+		return cliquePotentialValues;
 	}
 
 	private void marginalize(Map<Edge, CliquePotential> message, int i,
 			int k, BitSet marginalSet, BitSet sepSet, Map<BitSet, Float> cliquePotentialValues) {
+		Map<BitSet, Float> messagePotentialValues = marginalize(marginalSet,
+				cliquePotentialValues);
+		
+		Edge edge = new Edge(i, k, 1);
+		CliquePotential messageValue = new CliquePotential(sepSet, messagePotentialValues);
+		message.put(edge, messageValue);
+	}
+
+	private Map<BitSet, Float> marginalize(BitSet marginalSet,
+			Map<BitSet, Float> cliquePotentialValues) {
 		Map<BitSet,Float> messagePotentialValues = new HashMap<BitSet, Float>(); 
 		for(Map.Entry<BitSet, Float> cliquePotentialEntry: cliquePotentialValues.entrySet()){
 			BitSet messageKey = (BitSet) cliquePotentialEntry.getKey().clone();
@@ -149,11 +264,7 @@ public class MessagePassingAlgorithm {
 				messagePotentialValues.put(messageKey, cliquePotentialEntry.getValue());
 			}
 		}
-		
-		Edge edge = new Edge(i, k, 1);
-		
-		CliquePotential messageValue = new CliquePotential(sepSet, messagePotentialValues);
-		message.put(edge, messageValue);
+		return messagePotentialValues;
 	}
 	
 }
