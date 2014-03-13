@@ -20,7 +20,7 @@ import java.util.Set;
  */
 public class MessagePassingAlgorithm {
 	
-	public Map<Integer, CliquePotential> constructInitialPotentials(Map<Integer,BitSet> cliques, List<BitSet> edges, Map<BitSet,Map<BitSet,Float>> edgePotential){
+	public Map<Integer, CliquePotential> constructInitialPotentials(Map<Integer,BitSet> cliques, List<BitSet> edges, Map<BitSet,Map<BitSet,Double>> edgePotential){
 		Map<Integer,CliquePotential> cliquePotentialMap = new HashMap<Integer, CliquePotential>();
 		Map<Integer, List<BitSet>> edgeCliqueMapping = new HashMap<Integer, List<BitSet>>();
 		for(BitSet edge: edges){
@@ -45,7 +45,7 @@ public class MessagePassingAlgorithm {
 		for(Map.Entry<Integer, List<BitSet>> edgeCliqueMappingentry :edgeCliqueMapping.entrySet()){
 			List<BitSet> edgesInClique = edgeCliqueMappingentry.getValue();
 			
-//			Map<BitSet,Float> product = edgePotential.get(edgesInClique.get(0));
+//			Map<BitSet,Double> product = edgePotential.get(edgesInClique.get(0));
 			BitSet cliqueNodesProduct = edgesInClique.get(0);
 			CliquePotential product = new CliquePotential(cliqueNodesProduct, edgePotential.get(cliqueNodesProduct));
 			for(int i =1; i<edgesInClique.size(); i++){
@@ -58,11 +58,11 @@ public class MessagePassingAlgorithm {
 	}
 
 	private CliquePotential factorProduct(CliquePotential operand1, CliquePotential operand2){
-		Map<BitSet,Float> product = new HashMap<BitSet,Float>();	
+		Map<BitSet,Double> product = new HashMap<BitSet,Double>();	
 		BitSet intersectionMeta = (BitSet) operand1.getCliqueNodes().clone();
 		intersectionMeta.and(operand2.getCliqueNodes());
-		for(Map.Entry<BitSet, Float> operand1Entry:operand1.getPotential().entrySet()){
-			for(Map.Entry<BitSet, Float> operand2Entry:operand2.getPotential().entrySet()){
+		for(Map.Entry<BitSet, Double> operand1Entry:operand1.getPotential().entrySet()){
+			for(Map.Entry<BitSet, Double> operand2Entry:operand2.getPotential().entrySet()){
 //				BitSet productEntry = operand1Entry.getKey();
 //				productEntry.and(operand2Entry.getKey());
 				
@@ -138,9 +138,9 @@ public class MessagePassingAlgorithm {
 			marginalSet.or(cliquePotentialMap.get(rootNode).getCliqueNodes());
 			marginalSet.andNot(inputNode);
 			
-			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
-					cliquePotentialMap, message, numNodes, rootNode);
-			Map<BitSet, Float> marginalOutput = marginalize(marginalSet, cliquePotentialValues);
+			Map<BitSet, Double> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, rootNode).getPotential();
+			Map<BitSet, Double> marginalOutput = marginalize(marginalSet, cliquePotentialValues);
 			System.out.println("marginalOutput" +marginalOutput);
 		}else{
 			int k=0;
@@ -157,8 +157,8 @@ public class MessagePassingAlgorithm {
 			marginalSet = (BitSet)cliquePotentialMap.get(i).getCliqueNodes().clone();
 			marginalSet.andNot(sepSet);
 			
-			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
-					cliquePotentialMap, message, numNodes, i);
+			Map<BitSet, Double> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, i).getPotential();
 			marginalize(message, i, k, marginalSet, sepSet, cliquePotentialValues);
 			
 			for(int j=0; j<numNodes; j++){
@@ -195,9 +195,9 @@ public class MessagePassingAlgorithm {
 			marginalSet = new BitSet(numNodes);
 			marginalSet.flip(0, numNodes);
 			
-			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
-					cliquePotentialMap, message, numNodes, nodes.iterator().next());
-			Float normalizationConstant = marginalize(marginalSet, cliquePotentialValues).get(new BitSet(numNodes));
+			Map<BitSet, Double> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, nodes.iterator().next()).getPotential();
+			Double normalizationConstant = marginalize(marginalSet, cliquePotentialValues).get(new BitSet(numNodes));
 			System.out.println("normalizationConstant "+normalizationConstant);
 		}else{
 		
@@ -215,8 +215,8 @@ public class MessagePassingAlgorithm {
 			marginalSet = (BitSet)cliquePotentialMap.get(i).getCliqueNodes().clone();
 			marginalSet.andNot(sepSet);
 			
-			Map<BitSet, Float> cliquePotentialValues = computeFactorProduct(
-					cliquePotentialMap, message, numNodes, i);
+			Map<BitSet, Double> cliquePotentialValues = computeFactorProduct(
+					cliquePotentialMap, message, numNodes, i).getPotential();
 			marginalize(message, i, k, marginalSet, sepSet, cliquePotentialValues);
 			
 			for(int j=0; j<numNodes; j++){
@@ -228,10 +228,10 @@ public class MessagePassingAlgorithm {
 		}
 	}
 
-	private Map<BitSet, Float> computeFactorProduct(
+	private CliquePotential computeFactorProduct(
 			Map<Integer, CliquePotential> cliquePotentialMap,
 			Map<Edge, CliquePotential> message, int numNodes, int i) {
-		Map<BitSet,Float> cliquePotentialValues = cliquePotentialMap.get(i).getPotential();
+		Map<BitSet,Double> cliquePotentialValues = cliquePotentialMap.get(i).getPotential();
 		
 		CliquePotential messagePotential = cliquePotentialMap.get(i);
 		for(int j=0; j<numNodes; j++){
@@ -239,23 +239,24 @@ public class MessagePassingAlgorithm {
 				messagePotential = factorProduct(messagePotential, message.get(new Edge(j,i,1)));
 			}
 		}
-		return cliquePotentialValues;
+		return messagePotential;
 	}
 
 	private void marginalize(Map<Edge, CliquePotential> message, int i,
-			int k, BitSet marginalSet, BitSet sepSet, Map<BitSet, Float> cliquePotentialValues) {
-		Map<BitSet, Float> messagePotentialValues = marginalize(marginalSet,
+			int k, BitSet marginalSet, BitSet sepSet, Map<BitSet, Double> cliquePotentialValues) {
+		Map<BitSet, Double> messagePotentialValues = marginalize(marginalSet,
 				cliquePotentialValues);
 		
 		Edge edge = new Edge(i, k, 1);
 		CliquePotential messageValue = new CliquePotential(sepSet, messagePotentialValues);
+		System.out.println("delta "+i + " "+k + " "+messagePotentialValues);
 		message.put(edge, messageValue);
 	}
 
-	private Map<BitSet, Float> marginalize(BitSet marginalSet,
-			Map<BitSet, Float> cliquePotentialValues) {
-		Map<BitSet,Float> messagePotentialValues = new HashMap<BitSet, Float>(); 
-		for(Map.Entry<BitSet, Float> cliquePotentialEntry: cliquePotentialValues.entrySet()){
+	private Map<BitSet, Double> marginalize(BitSet marginalSet,
+			Map<BitSet, Double> cliquePotentialValues) {
+		Map<BitSet,Double> messagePotentialValues = new HashMap<BitSet, Double>(); 
+		for(Map.Entry<BitSet, Double> cliquePotentialEntry: cliquePotentialValues.entrySet()){
 			BitSet messageKey = (BitSet) cliquePotentialEntry.getKey().clone();
 			messageKey.andNot(marginalSet);
 			if(messagePotentialValues.containsKey(messageKey)){
